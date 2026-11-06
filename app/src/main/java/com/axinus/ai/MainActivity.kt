@@ -3,25 +3,35 @@ package com.axinus.ai
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.EditText
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
-    // Backend ready hone par yahan apna URL daalna
-    private val serverUrl = "https://example.com"
-
     private lateinit var web: WebView
+    private var fileCb: ValueCallback<Array<Uri>>? = null
 
     private val micLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private val fileLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+            fileCb?.onReceiveValue(
+                WebChromeClient.FileChooserParams.parseResult(r.resultCode, r.data)
+            )
+            fileCb = null
+        }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,6 +52,22 @@ class MainActivity : AppCompatActivity() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread { request.grant(request.resources) }
             }
+
+            override fun onShowFileChooser(
+                webView: WebView,
+                callback: ValueCallback<Array<Uri>>,
+                params: WebChromeClient.FileChooserParams
+            ): Boolean {
+                fileCb?.onReceiveValue(null)
+                fileCb = callback
+                return try {
+                    fileLauncher.launch(params.createIntent())
+                    true
+                } catch (e: Exception) {
+                    fileCb = null
+                    false
+                }
+            }
         }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
@@ -50,7 +76,23 @@ class MainActivity : AppCompatActivity() {
             micLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
 
-        web.loadUrl(serverUrl)
+        askUrl()
+    }
+
+    private fun askUrl() {
+        val prefs = getSharedPreferences("axinus", MODE_PRIVATE)
+        val input = EditText(this)
+        input.setText(prefs.getString("url", "https://"))
+        AlertDialog.Builder(this)
+            .setTitle("AXINUS server URL")
+            .setView(input)
+            .setCancelable(false)
+            .setPositiveButton("Open") { _, _ ->
+                val u = input.text.toString().trim()
+                prefs.edit().putString("url", u).apply()
+                web.loadUrl(u)
+            }
+            .show()
     }
 
     @Deprecated("Deprecated in Java")
