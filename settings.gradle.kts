@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AXINUS-Android"
+rootProject.name = "AXINUS-Android2"
 include(":app")
