@@ -27,7 +27,7 @@ object PhoneAgent {
         try {
             c.requestMethod = "POST"
             c.connectTimeout = 10000
-            c.readTimeout = 60000
+            c.readTimeout = 40000
             c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
             c.setRequestProperty("X-Pin", pin)
@@ -47,7 +47,7 @@ object PhoneAgent {
                 if (goal.isNotEmpty()) runGoal(s, j!!.optString("id"), goal)
             } catch (e: Exception) {
             }
-            try { Thread.sleep(4000) } catch (e: InterruptedException) { return }
+            try { Thread.sleep(300) } catch (e: InterruptedException) { return }
         }
     }
 
@@ -86,7 +86,8 @@ object PhoneAgent {
                 finish(s, id, "Sir, ruk gaya. " + r.removePrefix("BLOCKED: "))
                 return
             }
-            try { Thread.sleep(1300) } catch (e: InterruptedException) { return }
+            val w = when (a.optString("a")) { "open" -> 1100L; "type" -> 250L; "scroll" -> 450L; "click" -> 600L; else -> 450L }
+            try { Thread.sleep(w) } catch (e: InterruptedException) { return }
         }
         finish(s, id, "Sir, 18 steps me kaam poora nahi hua, rok diya.")
     }

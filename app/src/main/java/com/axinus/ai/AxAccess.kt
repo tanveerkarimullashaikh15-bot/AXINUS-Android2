@@ -87,7 +87,7 @@ class AxAccess : AccessibilityService() {
             val sx = p.x; val sy = p.y
             val tx = x - 60; val ty = y - 70
             val a = ValueAnimator.ofFloat(0f, 1f)
-            a.duration = 350
+            a.duration = 180
             a.addUpdateListener {
                 val f = it.animatedValue as Float
                 p.x = (sx + (tx - sx) * f).toInt()
@@ -96,7 +96,7 @@ class AxAccess : AccessibilityService() {
             }
             a.start()
         }
-        Thread.sleep(420)
+        Thread.sleep(210)
     }
 
     // ---------- reading the screen ----------
@@ -105,17 +105,18 @@ class AxAccess : AccessibilityService() {
         val list = ArrayList<AccessibilityNodeInfo>()
         val arr = JSONArray()
         fun walk(n: AccessibilityNodeInfo, d: Int) {
-            if (d > 40 || list.size >= 120) return
+            if (d > 40 || list.size >= 70) return
             if (n.isVisibleToUser && !n.isPassword) {
-                val t = (n.text?.toString() ?: n.contentDescription?.toString() ?: "").take(80)
+                val t = (n.text?.toString() ?: n.contentDescription?.toString() ?: "").take(60)
                 if (t.isNotEmpty() || n.isClickable || n.isEditable) {
                     val r = Rect()
                     n.getBoundsInScreen(r)
                     list.add(n)
-                    arr.put(
-                        JSONObject().put("i", list.size - 1).put("t", t).put("c", n.isClickable)
-                            .put("e", n.isEditable).put("s", n.isScrollable).put("y", r.centerY())
-                    )
+                    val o = JSONObject().put("i", list.size - 1).put("t", t)
+                    if (n.isClickable) o.put("c", 1)
+                    if (n.isEditable) o.put("e", 1)
+                    if (n.isScrollable) o.put("s", 1)
+                    arr.put(o)
                 }
             }
             for (k in 0 until n.childCount) {
@@ -138,6 +139,12 @@ class AxAccess : AccessibilityService() {
         return dispatchGesture(g, null, null)
     }
 
+    private fun scrollNode(down: Boolean): Boolean {
+        val n = nodes.firstOrNull { it.isScrollable } ?: return false
+        val act = if (down) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        return n.performAction(act)
+    }
+
     private fun swipe(down: Boolean): Boolean {
         val dm = resources.displayMetrics
         val x = dm.widthPixels / 2f
@@ -145,7 +152,7 @@ class AxAccess : AccessibilityService() {
         val b = dm.heightPixels * (if (down) 0.30f else 0.70f)
         val p = Path()
         p.moveTo(x, a); p.lineTo(x, b)
-        val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p, 0, 350)).build()
+        val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p, 0, 250)).build()
         return dispatchGesture(g, null, null)
     }
 
@@ -189,7 +196,10 @@ class AxAccess : AccessibilityService() {
                     b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, o.optString("t"))
                     if (n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b)) "ok" else "type failed"
                 }
-                "scroll" -> if (swipe(o.optString("d") != "up")) "ok" else "scroll failed"
+                "scroll" -> {
+                    val down = o.optString("d") != "up"
+                    if (scrollNode(down) || swipe(down)) "ok" else "scroll failed"
+                }
                 "back" -> if (performGlobalAction(GLOBAL_ACTION_BACK)) "ok" else "back failed"
                 "home" -> if (performGlobalAction(GLOBAL_ACTION_HOME)) "ok" else "home failed"
                 "wait" -> "ok"
