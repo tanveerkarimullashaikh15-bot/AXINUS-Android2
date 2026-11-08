@@ -175,20 +175,7 @@ class AxAccess : AccessibilityService() {
                 "open" -> openApp(o.optString("app"))
                 "click" -> {
                     val n = node(o.optInt("i", -1)) ?: return "no such item"
-                    val label = (n.text?.toString() ?: n.contentDescription?.toString() ?: "")
-                    if (BLOCK_TEXT.containsMatchIn(label)) return "BLOCKED: '" + label.take(30) + "' sensitive hai, aap khud tap karo"
-                    val (x, y) = center(n)
-                    moveCursor(x, y)
-                    var t: AccessibilityNodeInfo? = n
-                    var done = false
-                    var hop = 0
-                    while (t != null && hop < 5 && !done) {
-                        if (t.isClickable) done = t.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        t = t.parent
-                        hop++
-                    }
-                    if (!done) done = tapXY(x, y)
-                    if (done) "ok" else "click failed"
+                    clickNode(n, false)
                 }
                 "type" -> {
                     val n = node(o.optInt("i", -1)) ?: return "no such item"
@@ -230,6 +217,62 @@ class AxAccess : AccessibilityService() {
             "error: " + (e.message ?: "").take(60)
         }
     }
+
+
+    private fun labelOf(n: AccessibilityNodeInfo) = (n.text?.toString() ?: n.contentDescription?.toString() ?: "")
+
+    fun clickNode(n: AccessibilityNodeInfo, approved: Boolean): String {
+        val label = labelOf(n)
+        if (!approved && BLOCK_TEXT.containsMatchIn(label)) return "BLOCKED: '" + label.take(30) + "' sensitive hai, aap khud tap karo"
+        val (x, y) = center(n)
+        moveCursor(x, y)
+        var t: AccessibilityNodeInfo? = n
+        var done = false
+        var hop = 0
+        while (t != null && hop < 5 && !done) {
+            if (t.isClickable) done = t.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            t = t.parent
+            hop++
+        }
+        if (!done) done = tapXY(x, y)
+        return if (done) "ok" else "click failed"
+    }
+
+    /** click first visible item whose text/description matches any of the words (exact match preferred) */
+    fun clickText(words: List<String>, approved: Boolean): String {
+        screen()
+        val ws = words.map { it.lowercase().trim() }.filter { it.isNotEmpty() }
+        val hit = nodes.firstOrNull { n -> labelOf(n).lowercase().trim() in ws }
+            ?: nodes.firstOrNull { n -> val l = labelOf(n).lowercase(); ws.any { l.contains(it) } }
+            ?: return "nahi mila: " + words.joinToString("/")
+        return clickNode(hit, approved)
+    }
+
+    fun hasText(words: List<String>): Boolean {
+        screen()
+        val ws = words.map { it.lowercase() }
+        return nodes.any { n -> val l = labelOf(n).lowercase(); ws.any { l == it || l.contains(it) } }
+    }
+
+    fun waitPkg(part: String, ms: Long): Boolean {
+        val t = System.currentTimeMillis()
+        while (System.currentTimeMillis() - t < ms) {
+            if (currentPkg().lowercase().contains(part)) return true
+            Thread.sleep(150)
+        }
+        return false
+    }
+
+    fun typeFocused(txt: String, submit: Boolean): String {
+        screen()
+        val n = nodes.firstOrNull { it.isEditable && it.isFocused } ?: nodes.firstOrNull { it.isEditable } ?: return "koi text box nahi dikha"
+        val i = nodes.indexOf(n)
+        return act(JSONObject().put("a", "type").put("i", i).put("t", txt).put("submit", submit))
+    }
+
+    fun splitScreen(): Boolean = performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+
+    fun launchApp(name: String): String = openApp(name)
 
     private fun imeEnter(n: AccessibilityNodeInfo): Boolean {
         return if (Build.VERSION.SDK_INT >= 30) n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id) else false

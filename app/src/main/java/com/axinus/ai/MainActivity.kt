@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.webkit.JavascriptInterface
+import android.widget.Toast
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -74,22 +75,13 @@ class MainActivity : AppCompatActivity() {
                     stopService(Intent(this@MainActivity, WakeService::class.java))
                     return@runOnUiThread
                 }
-                val input = EditText(this@MainActivity)
-                input.setText(pr.getString("pvkey", ""))
-                input.hint = "Picovoice AccessKey"
                 val err = pr.getString("wake_err", "") ?: ""
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Hey AXINUS wake word")
-                    .setMessage(if (err.isEmpty()) "Paste your Picovoice AccessKey" else "Last error: " + err)
-                    .setView(input)
-                    .setPositiveButton("Start") { _, _ ->
-                        pr.edit().putString("pvkey", input.text.toString().trim()).remove("wake_err").apply()
-                        if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                            ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, WakeService::class.java))
-                        }
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
+                if (err.isNotEmpty()) Toast.makeText(this@MainActivity, "Last wake error: $err", Toast.LENGTH_LONG).show()
+                pr.edit().remove("wake_err").apply()
+                if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    Toast.makeText(this@MainActivity, "Wake word start ho raha hai (pehli baar ~40MB model download)", Toast.LENGTH_LONG).show()
+                    ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, WakeService::class.java))
+                }
             }
         }
 
@@ -125,6 +117,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         web = WebView(this)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 21)
         setContentView(web)
 
         web.settings.apply {

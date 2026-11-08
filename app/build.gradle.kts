@@ -34,5 +34,6 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.webkit:webkit:1.10.0")
-    implementation("ai.picovoice:porcupine-android:3.0.2")
+    implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
 }

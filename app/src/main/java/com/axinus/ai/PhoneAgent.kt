@@ -1,6 +1,11 @@
 package com.axinus.ai
 
+import android.Manifest
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.ContactsContract
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -44,7 +49,12 @@ object PhoneAgent {
             try {
                 val j = call(s, "phone_poll", JSONArray())
                 val goal = j?.optString("goal") ?: ""
-                if (goal.isNotEmpty()) runGoal(s, j!!.optString("id"), goal)
+                if (goal.isNotEmpty()) {
+                    val id = j!!.optString("id")
+                    val rc = j.optJSONObject("recipe")
+                    val out = if (rc != null) try { runRecipe(s, rc) } catch (e: Exception) { null } else null
+                    if (out != null) finish(s, id, out) else runGoal(s, id, goal)
+                }
             } catch (e: Exception) {
             }
             try { Thread.sleep(300) } catch (e: InterruptedException) { return }
@@ -54,6 +64,89 @@ object PhoneAgent {
     private fun finish(s: AxAccess, id: String, msg: String) {
         s.showCursor(false)
         try { call(s, "phone_done", JSONArray().put(id).put(msg)) } catch (e: Exception) { }
+    }
+
+
+    @Volatile private var pending = ""
+    @Volatile private var pendingT = 0L
+
+    private fun contactNum(c: Context, name: String): String? {
+        if (name.isBlank() || c.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return null
+        val cur = c.contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ?", arrayOf("%" + name.trim() + "%"), null
+        )
+        cur?.use { if (it.moveToFirst()) return it.getString(0) }
+        return null
+    }
+
+    private fun digits(n: String): String {
+        val d = n.filter { it.isDigit() }
+        return if (d.length == 10) "91$d" else d
+    }
+
+    private fun launch(s: AxAccess, i: Intent): Boolean = try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); s.startActivity(i); true } catch (e: Exception) { false }
+
+    /** returns result text, or null to fall back to the AI planner */
+    private fun runRecipe(s: AxAccess, r: JSONObject): String? {
+        s.showCursor(true)
+        val q = r.optString("q")
+        val out: String? = when (r.optString("k")) {
+            "open_app" -> {
+                val x = s.launchApp(q)
+                if (x == "ok") { Thread.sleep(1200); "Done: $q khul gaya." } else if (x.startsWith("BLOCKED")) x else null
+            }
+            "youtube_search" -> {
+                val u = Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(q))
+                var ok = launch(s, Intent(Intent.ACTION_VIEW, u).setPackage("com.google.android.youtube"))
+                if (!ok) ok = launch(s, Intent(Intent.ACTION_VIEW, u))
+                if (ok && s.waitPkg("youtube", 5000)) "Done: YouTube me '$q' ka search khul gaya." else if (ok) "Not completed: YouTube search bheja par screen confirm nahi hui." else null
+            }
+            "web_search" -> {
+                val ok = launch(s, Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(q))))
+                if (ok) { Thread.sleep(1500); "Done: Google par '$q' search khul gaya." } else null
+            }
+            "whatsapp_message", "call" -> {
+                val num = digits(r.optString("num").ifEmpty { contactNum(s, r.optString("name")) ?: "" })
+                if (num.length < 10) return null
+                if (r.optString("k") == "call") {
+                    if (!launch(s, Intent(Intent.ACTION_DIAL, Uri.parse("tel:+$num")))) return "Not completed: dialer nahi khula."
+                    Thread.sleep(1200)
+                    pending = "call"; pendingT = System.currentTimeMillis()
+                    "Done: Dialer me +$num aa gaya. Call lagane ke liye 'haan, call karo' boliye, cancel ke liye 'nahi'."
+                } else {
+                    val msg = r.optString("text")
+                    val u = Uri.parse("https://wa.me/$num?text=" + Uri.encode(msg))
+                    var ok = launch(s, Intent(Intent.ACTION_VIEW, u).setPackage("com.whatsapp"))
+                    if (!ok) ok = launch(s, Intent(Intent.ACTION_VIEW, u).setPackage("com.whatsapp.w4b"))
+                    if (!ok) return "Not completed: WhatsApp install nahi mila."
+                    var ready = false
+                    for (k in 1..25) { if (s.waitPkg("whatsapp", 300) && s.hasText(listOf("send"))) { ready = true; break }; Thread.sleep(200) }
+                    if (!ready) return "Not completed: WhatsApp chat khula par Send button nahi dikha, aap check kar lo."
+                    pending = "send"; pendingT = System.currentTimeMillis()
+                    "Done: WhatsApp chat khul gaya (+$num), message likha hua hai: '${msg.take(60)}'. Bhejne ke liye 'haan, bhej do' boliye, cancel ke liye 'nahi'."
+                }
+            }
+            "confirm" -> {
+                val p = if (System.currentTimeMillis() - pendingT < 180000) pending else ""
+                pending = ""
+                when (p) {
+                    "send" -> { val x = s.clickText(listOf("send"), true); if (x == "ok") "Done: message bhej diya." else "Not completed: Send nahi dab paya ($x). Aap khud dabao." }
+                    "call" -> { val x = s.clickText(listOf("call", "dial", "voice call", "audio call"), true); if (x == "ok") "Done: call laga diya." else "Not completed: Call button nahi mila ($x). Aap khud dabao." }
+                    else -> "Not completed: koi pending message/call nahi hai."
+                }
+            }
+            "deny" -> { pending = ""; s.act(JSONObject().put("a", "back")); "Done: cancel kar diya, kuch nahi bheja." }
+            "scroll" -> { val x = s.act(JSONObject().put("a", "scroll").put("d", r.optString("d", "down"))); if (x == "ok") "Done: scroll ho gaya." else "Not completed: $x" }
+            "back" -> { s.act(JSONObject().put("a", "back")); "Done: back ho gaya." }
+            "home" -> { s.act(JSONObject().put("a", "home")); "Done: home par aa gaya." }
+            "type" -> { val x = s.typeFocused(q, r.optBoolean("submit")); if (x.startsWith("ok")) "Done: '$q' type kar diya." else "Not completed: $x" }
+            "click_text" -> { val x = s.clickText(listOf(q), false); if (x == "ok") "Done: '$q' par tap kiya." else if (x.startsWith("BLOCKED")) x else "Not completed: $x" }
+            "split_screen" -> if (s.splitScreen()) "Done: split screen toggle kiya." else "Not completed: split screen nahi ho paya."
+            else -> null
+        }
+        return out
     }
 
     private fun runGoal(s: AxAccess, id: String, goal: String) {

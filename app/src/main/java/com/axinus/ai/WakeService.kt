@@ -1,8 +1,5 @@
 package com.axinus.ai
 
-import ai.picovoice.porcupine.Porcupine
-import ai.picovoice.porcupine.PorcupineManager
-import ai.picovoice.porcupine.PorcupineManagerCallback
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -13,7 +10,14 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import org.json.JSONObject
+import org.vosk.Model
+import org.vosk.Recognizer
+import org.vosk.android.RecognitionListener
+import org.vosk.android.SpeechService
 import java.io.File
+import java.net.URL
+import java.util.zip.ZipInputStream
 
 class WakeService : Service() {
 
@@ -22,8 +26,11 @@ class WakeService : Service() {
         private const val CH = "axinus_wake"
     }
 
-    private var pm: PorcupineManager? = null
+    private var model: Model? = null
+    private var sp: SpeechService? = null
+    @Volatile private var loading = false
     @Volatile var listening = false
+    private val WAKE = Regex("\\b(hey|hay|hi|ok|okay)\\s+(axis|access|actions|axe|exes|axinus|axis us|jarvis)\\b|\\bjarvis\\b|\\baxinus\\b")
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -55,31 +62,69 @@ class WakeService : Service() {
         else startForeground(7, n)
     }
 
-    fun startListening() {
+    private fun err(m: String) = getSharedPreferences("axinus", MODE_PRIVATE).edit().putString("wake_err", m.take(120)).apply()
+
+    private fun ensureModel(): File? {
+        val dir = File(filesDir, "vosk")
+        val ok = File(dir, "model/am/final.mdl")
+        if (ok.exists()) return File(dir, "model")
+        dir.mkdirs()
         try {
-            if (pm != null) { pm?.start(); listening = true; return }
-            val key = getSharedPreferences("axinus", MODE_PRIVATE).getString("pvkey", "") ?: ""
-            if (key.isEmpty()) { listening = false; return }
-            val b = PorcupineManager.Builder().setAccessKey(key).setSensitivity(0.7f)
-            val custom = assets.list("")?.contains("hey_axinus.ppn") == true
-            if (custom) {
-                val f = File(filesDir, "hey_axinus.ppn")
-                assets.open("hey_axinus.ppn").use { ins -> f.outputStream().use { ins.copyTo(it) } }
-                b.setKeywordPath(f.absolutePath)
-            } else {
-                b.setKeyword(Porcupine.BuiltInKeyword.JARVIS)
+            URL("https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip").openStream().use { ins ->
+                ZipInputStream(ins).use { z ->
+                    var e = z.nextEntry
+                    while (e != null) {
+                        val name = e.name.substringAfter("/")
+                        if (name.isNotEmpty()) {
+                            val f = File(dir, "model/$name")
+                            if (e.isDirectory) f.mkdirs() else { f.parentFile?.mkdirs(); f.outputStream().use { o -> z.copyTo(o) } }
+                        }
+                        e = z.nextEntry
+                    }
+                }
             }
-            pm = b.build(applicationContext, PorcupineManagerCallback { onWake() })
-            pm?.start()
-            listening = true
-        } catch (e: Exception) {
-            getSharedPreferences("axinus", MODE_PRIVATE).edit().putString("wake_err", (e.message ?: "").take(120)).apply()
-            stopSelf()
-        }
+        } catch (ex: Exception) { err("model download: " + (ex.message ?: "")); return null }
+        return if (ok.exists()) File(dir, "model") else null
+    }
+
+    fun startListening() {
+        if (sp != null) { listening = true; return }
+        if (loading) return
+        loading = true
+        Thread {
+            try {
+                if (model == null) {
+                    val d = ensureModel()
+                    if (d == null) { loading = false; listening = false; stopSelf(); return@Thread }
+                    model = Model(d.absolutePath)
+                }
+                val rec = Recognizer(model, 16000f, "[\"hey\", \"hi\", \"ok\", \"okay\", \"axis\", \"access\", \"actions\", \"axe\", \"exes\", \"jarvis\", \"[unk]\"]")
+                val s = SpeechService(rec, 16000f)
+                s.startListening(object : RecognitionListener {
+                    private fun chk(h: String?) {
+                        if (h == null) return
+                        val t = try { val j = JSONObject(h); j.optString("partial", j.optString("text")) } catch (e: Exception) { "" }
+                        if (WAKE.containsMatchIn(t)) onWake()
+                    }
+                    override fun onPartialResult(h: String?) = chk(h)
+                    override fun onResult(h: String?) = chk(h)
+                    override fun onFinalResult(h: String?) = chk(h)
+                    override fun onError(e: Exception?) { err("mic: " + (e?.message ?: "")) }
+                    override fun onTimeout() {}
+                })
+                sp = s
+                listening = true
+            } catch (e: Exception) {
+                err(e.message ?: "vosk error"); listening = false; stopSelf()
+            }
+            loading = false
+        }.start()
     }
 
     private fun onWake() {
-        try { pm?.stop() } catch (e: Exception) { }
+        try { sp?.stop(); sp?.shutdown() } catch (e: Exception) { }
+        sp = null
+        listening = false
         val i = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra("wake", true)
@@ -96,8 +141,8 @@ class WakeService : Service() {
     }
 
     override fun onDestroy() {
-        try { pm?.stop(); pm?.delete() } catch (e: Exception) { }
-        pm = null
+        try { sp?.stop(); sp?.shutdown() } catch (e: Exception) { }
+        sp = null
         inst = null
         listening = false
         super.onDestroy()
