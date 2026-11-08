@@ -2,7 +2,7 @@ name: Build AXINUS APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "claude-alarms" ]
   workflow_dispatch:
 
 jobs:
