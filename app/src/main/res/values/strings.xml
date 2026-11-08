@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ax_access_desc">AXINUS can open apps, tap, type and scroll on your phone when you ask it to. It never reads passwords and stops before send, pay or delete actions.</string>
+</resources>

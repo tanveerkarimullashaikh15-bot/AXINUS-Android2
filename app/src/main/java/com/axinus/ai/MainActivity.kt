@@ -2,7 +2,9 @@ package com.axinus.ai
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.Settings
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
@@ -31,6 +33,19 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     inner class Bridge {
+        @JavascriptInterface
+        fun setPin(pin: String) {
+            getSharedPreferences("axinus", MODE_PRIVATE).edit().putString("pin", pin).apply()
+        }
+
+        @JavascriptInterface
+        fun accessEnabled(): Boolean = AxAccess.inst != null
+
+        @JavascriptInterface
+        fun openAccessSettings() {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
         @JavascriptInterface
         fun sync(json: String) {
             TaskScheduler.sync(this@MainActivity, json)
