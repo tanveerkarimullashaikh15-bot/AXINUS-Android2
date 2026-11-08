@@ -50,7 +50,16 @@ class MainActivity : AppCompatActivity() {
 
     inner class Bridge {
         @JavascriptInterface
-        fun wakeOn(): Boolean = WakeService.inst != null
+        fun wakeOn(): Boolean = WakeService.inst?.listening == true
+
+        @JavascriptInterface
+        fun keepAlive() {
+            runOnUiThread {
+                if (WakeService.inst == null && ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    try { ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, WakeService::class.java)) } catch (e: Exception) { }
+                }
+            }
+        }
 
         @JavascriptInterface
         fun voiceOff() {
@@ -61,7 +70,7 @@ class MainActivity : AppCompatActivity() {
         fun wakeSetup() {
             runOnUiThread {
                 val pr = getSharedPreferences("axinus", MODE_PRIVATE)
-                if (WakeService.inst != null) {
+                if (WakeService.inst?.listening == true) {
                     stopService(Intent(this@MainActivity, WakeService::class.java))
                     return@runOnUiThread
                 }

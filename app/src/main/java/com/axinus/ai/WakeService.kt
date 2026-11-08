@@ -23,6 +23,7 @@ class WakeService : Service() {
     }
 
     private var pm: PorcupineManager? = null
+    @Volatile var listening = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -56,9 +57,9 @@ class WakeService : Service() {
 
     fun startListening() {
         try {
-            if (pm != null) { pm?.start(); return }
+            if (pm != null) { pm?.start(); listening = true; return }
             val key = getSharedPreferences("axinus", MODE_PRIVATE).getString("pvkey", "") ?: ""
-            if (key.isEmpty()) { stopSelf(); return }
+            if (key.isEmpty()) { listening = false; return }
             val b = PorcupineManager.Builder().setAccessKey(key).setSensitivity(0.7f)
             val custom = assets.list("")?.contains("hey_axinus.ppn") == true
             if (custom) {
@@ -70,6 +71,7 @@ class WakeService : Service() {
             }
             pm = b.build(applicationContext, PorcupineManagerCallback { onWake() })
             pm?.start()
+            listening = true
         } catch (e: Exception) {
             getSharedPreferences("axinus", MODE_PRIVATE).edit().putString("wake_err", (e.message ?: "").take(120)).apply()
             stopSelf()
@@ -97,6 +99,7 @@ class WakeService : Service() {
         try { pm?.stop(); pm?.delete() } catch (e: Exception) { }
         pm = null
         inst = null
+        listening = false
         super.onDestroy()
     }
 }

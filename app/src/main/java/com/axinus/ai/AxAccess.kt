@@ -3,7 +3,11 @@ package com.axinus.ai
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.animation.ValueAnimator
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -188,13 +192,30 @@ class AxAccess : AccessibilityService() {
                 }
                 "type" -> {
                     val n = node(o.optInt("i", -1)) ?: return "no such item"
-                    if (!n.isEditable) return "item editable nahi hai"
+                    if (!n.isEditable) return "item editable nahi hai, pehle us box par click karo"
                     val (x, y) = center(n)
                     moveCursor(x, y)
                     n.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    n.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    val txt = o.optString("t")
                     val b = Bundle()
-                    b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, o.optString("t"))
-                    if (n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b)) "ok" else "type failed"
+                    b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, txt)
+                    var ok = n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b)
+                    if (!ok) {
+                        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("ax", txt))
+                        ok = n.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                    }
+                    if (!ok) return "type failed"
+                    if (o.optBoolean("submit")) {
+                        Thread.sleep(300)
+                        if (!imeEnter(n)) return "ok (typed, enter nahi dab paya - search button par click karo)"
+                    }
+                    "ok typed '" + txt.take(30) + "'"
+                }
+                "enter" -> {
+                    val n = nodes.firstOrNull { it.isEditable && it.isFocused } ?: node(o.optInt("i", -1)) ?: return "koi text box nahi"
+                    if (imeEnter(n)) "ok" else "enter failed"
                 }
                 "scroll" -> {
                     val down = o.optString("d") != "up"
@@ -208,6 +229,10 @@ class AxAccess : AccessibilityService() {
         } catch (e: Exception) {
             "error: " + (e.message ?: "").take(60)
         }
+    }
+
+    private fun imeEnter(n: AccessibilityNodeInfo): Boolean {
+        return if (Build.VERSION.SDK_INT >= 30) n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id) else false
     }
 
     private fun openApp(name: String): String {
