@@ -3,6 +3,8 @@ package com.axinus.ai
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.net.Uri
@@ -32,7 +34,56 @@ class MainActivity : AppCompatActivity() {
     private val notifLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    private var pendingWake = false
+
+    private fun fireVoice(delay: Long) {
+        Handler(Looper.getMainLooper()).postDelayed({
+            web.evaluateJavascript("var b=document.getElementById('bgo');if(b)b.click();", null)
+        }, delay)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent?.getBooleanExtra("wake", false) == true) fireVoice(300)
+    }
+
     inner class Bridge {
+        @JavascriptInterface
+        fun wakeOn(): Boolean = WakeService.inst != null
+
+        @JavascriptInterface
+        fun voiceOff() {
+            WakeService.inst?.startListening()
+        }
+
+        @JavascriptInterface
+        fun wakeSetup() {
+            runOnUiThread {
+                val pr = getSharedPreferences("axinus", MODE_PRIVATE)
+                if (WakeService.inst != null) {
+                    stopService(Intent(this@MainActivity, WakeService::class.java))
+                    return@runOnUiThread
+                }
+                val input = EditText(this@MainActivity)
+                input.setText(pr.getString("pvkey", ""))
+                input.hint = "Picovoice AccessKey"
+                val err = pr.getString("wake_err", "") ?: ""
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Hey AXINUS wake word")
+                    .setMessage(if (err.isEmpty()) "Paste your Picovoice AccessKey" else "Last error: " + err)
+                    .setView(input)
+                    .setPositiveButton("Start") { _, _ ->
+                        pr.edit().putString("pvkey", input.text.toString().trim()).remove("wake_err").apply()
+                        if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                            ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, WakeService::class.java))
+                        }
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        }
+
         @JavascriptInterface
         fun setPin(pin: String) {
             getSharedPreferences("axinus", MODE_PRIVATE).edit().putString("pin", pin).apply()
@@ -75,7 +126,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         web.addJavascriptInterface(Bridge(), "AXAND")
-        web.webViewClient = WebViewClient()
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                if (pendingWake) { pendingWake = false; fireVoice(1500) }
+            }
+        }
         web.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread { request.grant(request.resources) }
@@ -111,7 +166,14 @@ class MainActivity : AppCompatActivity() {
             notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        askUrl()
+        if (Build.VERSION.SDK_INT >= 27) { setShowWhenLocked(true); setTurnScreenOn(true) }
+        val saved = getSharedPreferences("axinus", MODE_PRIVATE).getString("url", "") ?: ""
+        if (intent?.getBooleanExtra("wake", false) == true && saved.startsWith("http")) {
+            pendingWake = true
+            web.loadUrl(saved)
+        } else {
+            askUrl()
+        }
     }
 
     private fun askUrl() {

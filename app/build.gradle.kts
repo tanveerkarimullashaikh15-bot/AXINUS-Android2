@@ -34,4 +34,5 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.webkit:webkit:1.10.0")
+    implementation("ai.picovoice:porcupine-android:3.0.2")
 }
