@@ -30,7 +30,8 @@ class WakeService : Service() {
     private var sp: SpeechService? = null
     @Volatile private var loading = false
     @Volatile var listening = false
-    private val WAKE = Regex("\\b(hey|hay|hi|ok|okay)\\s+(axis|access|actions|axe|exes|axinus|axis us|jarvis)\\b|\\bjarvis\\b|\\baxinus\\b")
+    private val WAKE = Regex("\\b(hey|hay)\\s+(axis|axinus|jarvis)\\b")
+    @Volatile private var lastWake = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -139,6 +140,8 @@ class WakeService : Service() {
     }
 
     private fun onWake() {
+        if (System.currentTimeMillis() - lastWake < 15000) return
+        lastWake = System.currentTimeMillis()
         try { sp?.stop(); sp?.shutdown() } catch (e: Exception) { }
         sp = null
         listening = false
