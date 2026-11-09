@@ -64,27 +64,44 @@ class WakeService : Service() {
 
     private fun err(m: String) = getSharedPreferences("axinus", MODE_PRIVATE).edit().putString("wake_err", m.take(120)).apply()
 
+    private fun prog(t: String) = getSharedPreferences("axinus", MODE_PRIVATE).edit().putString("wake_prog", t).apply()
+
     private fun ensureModel(): File? {
         val dir = File(filesDir, "vosk")
         val ok = File(dir, "model/am/final.mdl")
         if (ok.exists()) return File(dir, "model")
         dir.mkdirs()
+        val zip = File(dir, "model.zip")
         try {
-            URL("https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip").openStream().use { ins ->
-                ZipInputStream(ins).use { z ->
-                    var e = z.nextEntry
-                    while (e != null) {
-                        val name = e.name.substringAfter("/")
-                        if (name.isNotEmpty()) {
-                            val f = File(dir, "model/$name")
-                            if (e.isDirectory) f.mkdirs() else { f.parentFile?.mkdirs(); f.outputStream().use { o -> z.copyTo(o) } }
-                        }
-                        e = z.nextEntry
+            val c = URL("https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip").openConnection() as java.net.HttpURLConnection
+            c.connectTimeout = 15000; c.readTimeout = 20000; c.instanceFollowRedirects = true
+            if (c.responseCode != 200) { err("download HTTP " + c.responseCode); return null }
+            val total = c.contentLengthLong
+            var got = 0L; var last = 0L
+            c.inputStream.use { ins -> zip.outputStream().use { o ->
+                val buf = ByteArray(65536); var n = ins.read(buf)
+                while (n > 0) {
+                    o.write(buf, 0, n); got += n
+                    if (got - last > 1_000_000) { last = got; prog("Download " + (got / 1_000_000) + "/" + (total / 1_000_000) + " MB") }
+                    n = ins.read(buf)
+                }
+            } }
+            prog("Unzip ho raha hai...")
+            ZipInputStream(zip.inputStream()).use { z ->
+                var e = z.nextEntry
+                while (e != null) {
+                    val name = e.name.substringAfter("/")
+                    if (name.isNotEmpty()) {
+                        val f = File(dir, "model/$name")
+                        if (e.isDirectory) f.mkdirs() else { f.parentFile?.mkdirs(); f.outputStream().use { o -> z.copyTo(o) } }
                     }
+                    e = z.nextEntry
                 }
             }
-        } catch (ex: Exception) { err("model download: " + (ex.message ?: "")); return null }
-        return if (ok.exists()) File(dir, "model") else null
+            zip.delete()
+        } catch (ex: Exception) { zip.delete(); err("model download: " + (ex.message ?: ex.javaClass.simpleName)); prog(""); return null }
+        prog("")
+        return if (ok.exists()) File(dir, "model") else { err("model files adhoore"); null }
     }
 
     fun startListening() {

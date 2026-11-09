@@ -79,7 +79,8 @@ class MainActivity : AppCompatActivity() {
                 if (err.isNotEmpty()) Toast.makeText(this@MainActivity, "Last wake error: $err", Toast.LENGTH_LONG).show()
                 pr.edit().remove("wake_err").apply()
                 if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(this@MainActivity, "Wake word start ho raha hai (pehli baar ~40MB model download)", Toast.LENGTH_LONG).show()
+                    val pg = pr.getString("wake_prog", "") ?: ""
+                    Toast.makeText(this@MainActivity, if (pg.isNotEmpty()) "Wake word: $pg" else "Wake word start ho raha hai (pehli baar ~40MB download, status dobara tap karke dekho)", Toast.LENGTH_LONG).show()
                     ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, WakeService::class.java))
                 }
             }
