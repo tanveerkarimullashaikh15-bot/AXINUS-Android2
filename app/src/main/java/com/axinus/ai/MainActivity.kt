@@ -118,7 +118,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         web = WebView(this)
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 21)
+        val need = arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.READ_CALL_LOG).filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+        if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), 21)
         setContentView(web)
 
         web.settings.apply {

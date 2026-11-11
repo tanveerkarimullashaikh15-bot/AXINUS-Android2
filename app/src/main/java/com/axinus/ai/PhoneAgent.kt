@@ -53,7 +53,7 @@ object PhoneAgent {
                     val id = j!!.optString("id")
                     val rc = j.optJSONObject("recipe")
                     val out = if (rc != null) try { runRecipe(s, rc) } catch (e: Exception) { null } else null
-                    if (out != null) finish(s, id, out) else runGoal(s, id, goal)
+                    if (out != null) { val d = payload; payload = ""; finish(s, id, out, d) } else runGoal(s, id, goal)
                 }
             } catch (e: Exception) {
             }
@@ -61,9 +61,27 @@ object PhoneAgent {
         }
     }
 
-    private fun finish(s: AxAccess, id: String, msg: String) {
+    private fun finish(s: AxAccess, id: String, msg: String, data: String = "") {
         s.showCursor(false)
-        try { call(s, "phone_done", JSONArray().put(id).put(msg)) } catch (e: Exception) { }
+        try { call(s, "phone_done", JSONArray().put(id).put(msg).put(data)) } catch (e: Exception) { }
+    }
+
+    @Volatile private var payload = ""
+
+    private fun callLog(c: Context, n: Int): String {
+        if (c.checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) return ""
+        val arr = JSONArray()
+        val cur = c.contentResolver.query(android.provider.CallLog.Calls.CONTENT_URI,
+            arrayOf(android.provider.CallLog.Calls.NUMBER, android.provider.CallLog.Calls.TYPE, android.provider.CallLog.Calls.DATE, android.provider.CallLog.Calls.CACHED_NAME, android.provider.CallLog.Calls.DURATION),
+            null, null, android.provider.CallLog.Calls.DATE + " DESC")
+        cur?.use {
+            var k = 0
+            while (it.moveToNext() && k < n) {
+                arr.put(JSONObject().put("num", it.getString(0) ?: "").put("type", it.getInt(1)).put("ts", it.getLong(2)).put("name", it.getString(3) ?: "").put("dur", it.getInt(4)))
+                k++
+            }
+        }
+        return arr.toString()
     }
 
 
@@ -143,6 +161,9 @@ object PhoneAgent {
             "home" -> { s.act(JSONObject().put("a", "home")); "Done: home par aa gaya." }
             "type" -> { val x = s.typeFocused(q, r.optBoolean("submit")); if (x.startsWith("ok")) "Done: '$q' type kar diya." else "Not completed: $x" }
             "click_text" -> { val x = s.clickText(listOf(q), false); if (x == "ok") "Done: '$q' par tap kiya." else if (x.startsWith("BLOCKED")) x else "Not completed: $x" }
+            "look" -> { val b = s.shotB64(); if (b.startsWith("ERR")) "Not completed: " + b.removePrefix("ERR: ") else { payload = b; "Done: screenshot liya." } }
+            "tap_xy" -> { val x = s.tapNorm(r.optInt("x"), r.optInt("y"), false); if (x == "ok") "Done: screen par tap kiya." else if (x.startsWith("BLOCKED")) x else "Not completed: $x" }
+            "calllog" -> { val l = callLog(s, r.optInt("n", 15)); if (l.isEmpty()) "Not completed: Call log permission nahi hai. App settings me Call logs allow karo." else { payload = l; "Done: call log mila." } }
             "split_screen" -> if (s.splitScreen()) "Done: split screen toggle kiya." else "Not completed: split screen nahi ho paya."
             else -> null
         }

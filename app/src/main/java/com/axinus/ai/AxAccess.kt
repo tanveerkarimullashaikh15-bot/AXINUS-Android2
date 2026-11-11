@@ -9,6 +9,12 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.graphics.Path
+import android.graphics.Bitmap
+import android.util.Base64
+import android.view.Display
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Bundle
@@ -141,6 +147,60 @@ class AxAccess : AccessibilityService() {
         p.moveTo(x.toFloat(), y.toFloat())
         val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p, 0, 80)).build()
         return dispatchGesture(g, null, null)
+    }
+
+
+    // ---------- screen vision ----------
+    /** screenshot -> base64 JPEG (max 720px wide). returns "ERR: ..." on failure */
+    fun shotB64(): String {
+        if (Build.VERSION.SDK_INT < 30) return "ERR: Android 11+ chahiye screenshot ke liye."
+        val pkg = currentPkg().lowercase()
+        if (BLOCK_PKG.any { pkg.contains(it) }) return "ERR: payment/bank app screen hai, privacy ke liye screenshot nahi liya."
+        main.post { cursor?.visibility = View.INVISIBLE }
+        Thread.sleep(180)
+        val latch = CountDownLatch(1); var out = "ERR: screenshot nahi mila."
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY, java.util.concurrent.Executors.newSingleThreadExecutor(), object : TakeScreenshotCallback {
+                override fun onSuccess(r: ScreenshotResult) {
+                    try {
+                        val hb = r.hardwareBuffer
+                        val bm = Bitmap.wrapHardwareBuffer(hb, r.colorSpace)!!.copy(Bitmap.Config.ARGB_8888, false)
+                        hb.close()
+                        val w = minOf(720, bm.width); val h = bm.height * w / bm.width
+                        val sc = Bitmap.createScaledBitmap(bm, w, h, true)
+                        val bo = ByteArrayOutputStream(); sc.compress(Bitmap.CompressFormat.JPEG, 60, bo)
+                        out = Base64.encodeToString(bo.toByteArray(), Base64.NO_WRAP)
+                    } catch (e: Exception) { out = "ERR: " + e.message }
+                    latch.countDown()
+                }
+                override fun onFailure(code: Int) { out = "ERR: screenshot fail code $code (kuch der baad try karo)"; latch.countDown() }
+            })
+            latch.await(6, TimeUnit.SECONDS)
+        } catch (e: Exception) { out = "ERR: " + e.message }
+        main.post { cursor?.visibility = View.VISIBLE }
+        return out
+    }
+
+    private fun deepestAt(n: AccessibilityNodeInfo, x: Int, y: Int, d: Int = 0): AccessibilityNodeInfo? {
+        val r = Rect(); n.getBoundsInScreen(r)
+        if (!r.contains(x, y) || d > 30) return null
+        for (i in 0 until n.childCount) { val c = n.getChild(i) ?: continue; val f = deepestAt(c, x, y, d + 1); if (f != null) return f }
+        return n
+    }
+
+    /** tap at normalised 0..1000 coordinates; refuses send/pay/delete style targets */
+    fun tapNorm(nx: Int, ny: Int, approved: Boolean): String {
+        val dm = resources.displayMetrics
+        val x = (nx.coerceIn(0, 1000) * dm.widthPixels / 1000.0).toInt(); val y = (ny.coerceIn(0, 1000) * dm.heightPixels / 1000.0).toInt()
+        val pkg = currentPkg().lowercase()
+        if (BLOCK_PKG.any { pkg.contains(it) }) return "BLOCKED: payment/bank app par tap nahi karunga."
+        if (!approved) {
+            var n = rootInActiveWindow?.let { deepestAt(it, x, y) }
+            var k = 0
+            while (n != null && k < 4) { if (BLOCK_TEXT.containsMatchIn(labelOf(n))) return "BLOCKED: '${labelOf(n).take(30)}' sensitive button hai, aap khud dabao."; n = n.parent; k++ }
+        }
+        moveCursor(x, y)
+        return if (tapXY(x, y)) "ok" else "tap fail"
     }
 
     private fun scrollNode(down: Boolean): Boolean {
