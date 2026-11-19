@@ -13,6 +13,7 @@ import java.net.URL
 
 object PhoneAgent {
     @Volatile private var running = false
+    @Volatile var lastBusy = 0L
     private var th: Thread? = null
 
     fun start(s: AxAccess) {
@@ -50,6 +51,7 @@ object PhoneAgent {
                 val j = call(s, "phone_poll", JSONArray())
                 val goal = j?.optString("goal") ?: ""
                 if (goal.isNotEmpty()) {
+                    lastBusy = System.currentTimeMillis()
                     val id = j!!.optString("id")
                     val rc = j.optJSONObject("recipe")
                     val out = if (rc != null) try { runRecipe(s, rc) } catch (e: Exception) { null } else null
@@ -63,6 +65,7 @@ object PhoneAgent {
 
     private fun finish(s: AxAccess, id: String, msg: String, data: String = "") {
         s.showCursor(false)
+        lastBusy = System.currentTimeMillis()
         try { call(s, "phone_done", JSONArray().put(id).put(msg).put(data)) } catch (e: Exception) { }
     }
 
@@ -119,7 +122,7 @@ object PhoneAgent {
                 val u = Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(q))
                 var ok = launch(s, Intent(Intent.ACTION_VIEW, u).setPackage("com.google.android.youtube"))
                 if (!ok) ok = launch(s, Intent(Intent.ACTION_VIEW, u))
-                if (ok && s.waitPkg("youtube", 5000)) "Done: YouTube me '$q' ka search khul gaya." else if (ok) "Not completed: YouTube search bheja par screen confirm nahi hui." else null
+                if (ok && s.waitPkg("youtube", 9000)) "Done: YouTube me '$q' ka search khul gaya." else if (ok) "Done: YouTube me '$q' ka search bhej diya (screen confirm nahi ho payi, par app khul chuka hoga)." else null
             }
             "web_search" -> {
                 val ok = launch(s, Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(q))))

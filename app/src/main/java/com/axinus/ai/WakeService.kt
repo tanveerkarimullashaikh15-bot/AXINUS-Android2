@@ -140,8 +140,12 @@ class WakeService : Service() {
     }
 
     private fun onWake() {
-        if (System.currentTimeMillis() - lastWake < 15000) return
-        lastWake = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        if (now - lastWake < 15000) return
+        // false-trigger guard: ignore while a phone task is running / just finished, or while media / Axinus voice is playing
+        if (now - PhoneAgent.lastBusy < 45000) return
+        try { if ((getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager).isMusicActive) return } catch (e: Exception) { }
+        lastWake = now
         try { sp?.stop(); sp?.shutdown() } catch (e: Exception) { }
         sp = null
         listening = false
