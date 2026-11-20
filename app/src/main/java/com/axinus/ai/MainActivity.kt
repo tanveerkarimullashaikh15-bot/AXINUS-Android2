@@ -19,6 +19,8 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -131,6 +133,9 @@ class MainActivity : AppCompatActivity() {
 
         web.addJavascriptInterface(Bridge(), "AXAND")
         web.webViewClient = object : WebViewClient() {
+            override fun onReceivedError(view: WebView?, req: WebResourceRequest?, err: WebResourceError?) {
+                if (req?.isForMainFrame == true) resolveAndLoad(true)
+            }
             override fun onPageFinished(view: WebView?, url: String?) {
                 if (pendingWake) { pendingWake = false; fireVoice(1500) }
             }
@@ -172,26 +177,57 @@ class MainActivity : AppCompatActivity() {
 
         if (Build.VERSION.SDK_INT >= 27) { setShowWhenLocked(true); setTurnScreenOn(true) }
         val saved = getSharedPreferences("axinus", MODE_PRIVATE).getString("url", "") ?: ""
-        if (intent?.getBooleanExtra("wake", false) == true && saved.startsWith("http")) {
-            pendingWake = true
-            web.loadUrl(saved)
-        } else {
-            askUrl()
-        }
+        val code = getSharedPreferences("axinus", MODE_PRIVATE).getString("code", "") ?: ""
+        if (intent?.getBooleanExtra("wake", false) == true) pendingWake = true
+        if (saved.startsWith("http") || code.isNotEmpty()) resolveAndLoad(false) else askUrl()
+    }
+
+    private var retried = false
+    /** Auto URL: server publishes its fresh tunnel URL to ntfy topic = code. Falls back to saved URL. */
+    private fun resolveAndLoad(isError: Boolean) {
+        val prefs = getSharedPreferences("axinus", MODE_PRIVATE)
+        val code = prefs.getString("code", "") ?: ""
+        val saved = prefs.getString("url", "") ?: ""
+        if (isError) { if (retried || code.isEmpty()) return; retried = true }
+        Thread {
+            var u = ""
+            if (code.isNotEmpty()) {
+                try {
+                    val c = java.net.URL("https://ntfy.sh/" + code + "/json?poll=1&since=24h").openConnection() as java.net.HttpURLConnection
+                    c.connectTimeout = 6000; c.readTimeout = 8000
+                    val last = c.inputStream.bufferedReader().readLines().lastOrNull { it.contains("trycloudflare") }
+                    if (last != null) {
+                        val m = Regex("https://[a-z0-9-]+\\.trycloudflare\\.com").find(last)
+                        if (m != null) u = m.value
+                    }
+                } catch (e: Exception) { }
+            }
+            if (u.isEmpty()) u = saved
+            runOnUiThread {
+                if (u.startsWith("http")) {
+                    prefs.edit().putString("url", u).apply()
+                    if (isError && u == web.url?.trimEnd('/')) return@runOnUiThread
+                    web.loadUrl(u)
+                } else askUrl()
+            }
+        }.start()
     }
 
     private fun askUrl() {
         val prefs = getSharedPreferences("axinus", MODE_PRIVATE)
         val input = EditText(this)
-        input.setText(prefs.getString("url", "https://"))
+        input.hint = "AXINUS code (auto) ya https://... URL"
+        input.setText(prefs.getString("code", "") ?: prefs.getString("url", "https://"))
         AlertDialog.Builder(this)
-            .setTitle("AXINUS server URL")
+            .setTitle("AXINUS code ya server URL")
             .setView(input)
             .setCancelable(false)
             .setPositiveButton("Open") { _, _ ->
                 val u = input.text.toString().trim()
-                prefs.edit().putString("url", u).apply()
-                web.loadUrl(u)
+                if (u.startsWith("http")) prefs.edit().putString("url", u).remove("code").apply()
+                else prefs.edit().putString("code", u).apply()
+                retried = false
+                resolveAndLoad(false)
             }
             .show()
     }
